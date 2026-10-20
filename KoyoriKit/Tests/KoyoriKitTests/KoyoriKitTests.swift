@@ -193,6 +193,28 @@ import Testing
     #expect(unknown.message == "something_new" && unknown.payload.round == nil)
 }
 
+@Test func notificationSectionsByDay() throws {
+    func item(_ id: Int, _ createdAt: String) throws -> AppNotification {
+        try APIClient.decoder().decode(AppNotification.self, from: Data("""
+            {"id":"00000000-0000-0000-0000-\(String(format: "%012d", id))","notification_type":"assigned","payload":{},
+             "cursor":"c","created_at":"\(createdAt)","read_at":null,"project":null,"task":null}
+            """.utf8))
+    }
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = TimeZone(identifier: "Asia/Tokyo")!
+    let now = try #require(ISO8601DateFormatter().date(from: "2026-10-20T09:00:00+09:00"))
+    // 日付の境目は端末のタイムゾーンで数える（UTC では前日の 2026-10-19T15:00Z が JST の今日の 0 時）
+    let items = try [
+        item(1, "2026-10-19T15:00:00Z"), item(2, "2026-10-19T14:59:59Z"), item(3, "2026-10-14T00:00:00+09:00"),
+        item(4, "2026-10-13T23:59:59+09:00"),
+    ]
+    let sections = notificationSections(items, now: now, calendar: calendar)
+    #expect(sections.map(\.title) == ["今日", "昨日", "この 7 日間", "それ以前"])
+    #expect(sections.map(\.items.count) == [1, 1, 1, 1])
+    // 空の区切りは出さない
+    #expect(notificationSections([items[0], items[3]], now: now, calendar: calendar).map(\.title) == ["今日", "それ以前"])
+}
+
 @Test func reviewVerdictAndActionsMatchWeb() throws {
     func summary(_ gate: String, blocking: Int = 0, latest: String? = "abcdef1234", cached: String? = nil) throws -> ReviewSummary {
         let fields = [
@@ -404,4 +426,11 @@ import Testing
 @Test func colorHexRoundTripsPresetAndClampsWideGamut() {
     #expect(Color(hex: "#3b82f6").hex == "#3b82f6")
     #expect(Color(.displayP3, red: 1, green: 0, blue: 0).hex == "#ff0000")
+}
+
+@Test func seedColorIsStableAndSpreads() {
+    // 起動をまたいで同じ名前は同じ色（FNV-1a の既知値: "a" → 0xE40C292C）
+    #expect(Color(seed: "yupix") == Color(seed: "yupix"))
+    #expect(Color(seed: "a") == [Color.blue, .indigo, .purple, .pink, .red, .orange, .green][Int(0xE40C_292C % 7)])
+    #expect(Set(["yupix", "tanaka_ken", "suzuki_mio", "sato_haruka", "ito_yui"].map { Color(seed: $0).description }).count >= 4)
 }

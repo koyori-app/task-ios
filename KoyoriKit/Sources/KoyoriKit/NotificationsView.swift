@@ -30,22 +30,28 @@ struct NotificationsView: View {
                 .listRowBackground(Color.clear)
                 .listRowSeparator(.hidden)
 
-                ForEach(notifications ?? []) { item in
-                    Group {
-                        if let destination = destination(item) {
-                            NavigationLink {
-                                destination.task { await markRead(item) }
-                            } label: {
-                                NotificationRow(item: item)
+                ForEach(notificationSections(notifications ?? []), id: \.title) { section in
+                    Section {
+                        ForEach(section.items) { item in
+                            Group {
+                                if let destination = destination(item) {
+                                    NavigationLink {
+                                        destination.task { await markRead(item) }
+                                    } label: {
+                                        NotificationRow(item: item)
+                                    }
+                                } else {
+                                    NotificationRow(item: item)
+                                }
                             }
-                        } else {
-                            NotificationRow(item: item)
+                            .swipeActions {
+                                if item.readAt == nil {
+                                    Button("既読にする", systemImage: "envelope.open") { Task { await markRead(item) } }.tint(.blue)
+                                }
+                            }
                         }
-                    }
-                    .swipeActions {
-                        if item.readAt == nil {
-                            Button("既読にする", systemImage: "envelope.open") { Task { await markRead(item) } }.tint(.blue)
-                        }
+                    } header: {
+                        Text(section.title)
                     }
                 }
                 if notifications?.isEmpty == true {
@@ -139,6 +145,25 @@ struct NotificationsView: View {
         } catch {
             self.error = error.displayMessage
         }
+    }
+}
+
+/// 届いた日で区切る（今日・昨日・この 7 日間・それ以前）。区切りの中は API の新しい順のまま。
+func notificationSections(
+    _ items: [AppNotification], now: Date = .now, calendar: Calendar = .current
+) -> [(title: String, items: [AppNotification])] {
+    let today = calendar.startOfDay(for: now)
+    func title(_ date: Date) -> String {
+        switch calendar.dateComponents([.day], from: calendar.startOfDay(for: date), to: today).day ?? 0 {
+        case ...0: "今日"
+        case 1: "昨日"
+        case 2..<7: "この 7 日間"
+        default: "それ以前"
+        }
+    }
+    return ["今日", "昨日", "この 7 日間", "それ以前"].compactMap { key in
+        let matched = items.filter { title($0.createdAt) == key }
+        return matched.isEmpty ? nil : (key, matched)
     }
 }
 

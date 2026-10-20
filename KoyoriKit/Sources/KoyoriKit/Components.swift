@@ -83,18 +83,29 @@ struct PriorityLabel: View {
 }
 
 extension TaskPriority {
-    /// Web の `PRIORITY_CONFIG` と同じ色。強さは電波の本数で表し、緊急だけ炎にする。
+    /// Web の `PRIORITY_CONFIG` と同じ色。
+    var color: Color {
+        switch self {
+        case .criticalFire: Color(hex: "#dc2626")
+        case .critical: Color(hex: "#ef4444")
+        case .high: Color(hex: "#f97316")
+        case .medium: Color(hex: "#eab308")
+        case .low: Color(hex: "#6b7280")
+        case .trivial: Color(hex: "#9ca3af")
+        }
+    }
+
+    /// 強さは電波の本数で表し、緊急だけ炎にする。
     var icon: some View {
-        let (symbol, level, color): (String, Double, String) =
+        let (symbol, level): (String, Double) =
             switch self {
-            case .criticalFire: ("flame.fill", 1, "#dc2626")
-            case .critical: ("cellularbars", 1, "#ef4444")
-            case .high: ("cellularbars", 0.75, "#f97316")
-            case .medium: ("cellularbars", 0.5, "#eab308")
-            case .low: ("cellularbars", 0.25, "#6b7280")
-            case .trivial: ("cellularbars", 0.25, "#9ca3af")
+            case .criticalFire: ("flame.fill", 1)
+            case .critical: ("cellularbars", 1)
+            case .high: ("cellularbars", 0.75)
+            case .medium: ("cellularbars", 0.5)
+            case .low, .trivial: ("cellularbars", 0.25)
             }
-        return Image(systemName: symbol, variableValue: level).foregroundStyle(Color(hex: color))
+        return Image(systemName: symbol, variableValue: level).foregroundStyle(color)
     }
 }
 
@@ -123,14 +134,42 @@ struct LabelChip: View {
     let label: TaskLabel
 
     var body: some View {
+        let color = Color(hex: label.color)
         HStack(spacing: 5) {
-            Circle().fill(Color(hex: label.color)).frame(width: 8, height: 8)
-            Text(label.name)
+            Circle().fill(color).frame(width: 8, height: 8)
+            Text(label.name).lineLimit(1)
         }
-        .font(.caption.weight(.medium))
+        .font(.subheadline)
         .padding(.horizontal, 10)
-        .padding(.vertical, 5)
-        .background(.fill.tertiary, in: .capsule)
+        .padding(.vertical, 4)
+        // ラベルの色をうっすら敷いて、灰色の札より見分けやすくする
+        .background(color.opacity(0.15), in: .capsule)
+    }
+}
+
+/// 一覧の行のラベル。札にせず「● 名前」だけを並べて、行を軽く保つ。
+struct InlineLabels: View {
+    let labels: [TaskLabel]
+
+    var body: some View {
+        // 入らない分は数で出す（ViewThatFits は先頭から試すので、全部出す形を先に置く）
+        ViewThatFits(in: .horizontal) {
+            ForEach(0..<labels.count, id: \.self) { hidden in
+                HStack(spacing: 10) {
+                    ForEach(labels.dropLast(hidden)) { label in
+                        HStack(spacing: 4) {
+                            Circle().fill(Color(hex: label.color)).frame(width: 7, height: 7)
+                            Text(label.name)
+                        }
+                        .fixedSize()
+                    }
+                    if hidden > 0 { Text(verbatim: "+\(hidden)").fixedSize() }
+                }
+            }
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -179,11 +218,14 @@ struct Avatar: View {
                 // ツールバーに置いても単色で塗られないよう、元の色で描く
                 image.renderingMode(.original).resizable().scaledToFill()
             } else {
+                // 濃い単色の丸は並ぶと騒がしいので、名前の色を薄く敷いて頭文字をその色で書く
+                let color = Color(seed: name)
                 Text(verbatim: String(name.prefix(1)).uppercased())
-                    .font(.system(size: size * 0.45, weight: .semibold))
-                    .foregroundStyle(.white)
+                    .font(.system(size: size * 0.44, weight: .bold, design: .rounded))
+                    .foregroundStyle(color)
                     .frame(width: size, height: size)
-                    .background(Color(seed: name).gradient)
+                    .background(color.opacity(0.2))
+                    .background(.background)
             }
         }
         .frame(width: size, height: size)
@@ -192,18 +234,48 @@ struct Avatar: View {
     }
 }
 
-/// 重ねたアイコン（一覧の行の担当者）。多いときは先頭の 3 人まで。
+/// 重ねたアイコン（一覧の行の担当者）。多いときは先頭の 3 人までにして、残りは数で出す。
 struct AvatarStack: View {
     let users: [UserSummary]
     let size: CGFloat
 
     var body: some View {
-        HStack(spacing: -size / 3) {
+        HStack(spacing: -size / 4) {
             ForEach(users.prefix(3)) { user in
                 Avatar(name: user.username, url: user.avatarUrl, size: size)
-                    .overlay(Circle().stroke(.background, lineWidth: 1.5))
+                    .padding(1.5)
+                    .background(.background, in: .circle)
+            }
+            if users.count > 3 {
+                Text(verbatim: "+\(users.count - 3)")
+                    .font(.system(size: size * 0.4, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.secondary)
+                    .frame(width: size, height: size)
+                    .background(.fill.secondary, in: .circle)
+                    .padding(1.5)
+                    .background(.background, in: .circle)
             }
         }
+    }
+}
+
+/// アイコンと名前の札（詳細の担当者・作成者）。
+struct PersonChip: View {
+    let name: String
+    let url: String?
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Avatar(name: name, url: url, size: 22)
+            Text(verbatim: name).lineLimit(1)
+        }
+        .font(.subheadline)
+        // ボタンの中の `.primary` はアクセント色になるので、文字色を直接指定する
+        .foregroundStyle(Color.primary)
+        .padding(.leading, 3)
+        .padding(.trailing, 10)
+        .padding(.vertical, 3)
+        .background(.fill.tertiary, in: .capsule)
     }
 }
 
@@ -222,14 +294,15 @@ extension LabelStyle where Self == CompactLabelStyle {
 }
 
 extension View {
-    /// 詳細画面のステータス・優先度のような、押せる小さな札。
-    func pill() -> some View {
+    /// 詳細画面のステータス・優先度のような、押せる小さな札。`tint` を渡すとその色を薄く敷く。
+    func pill(tint: Color? = nil) -> some View {
         labelStyle(.compact)
             .font(.subheadline.weight(.medium))
             .foregroundStyle(.primary)
             .padding(.horizontal, 12)
             .padding(.vertical, 7)
-            .background(.fill.secondary, in: .capsule)
+            .background(tint.map { AnyShapeStyle($0.opacity(0.16)) } ?? AnyShapeStyle(.fill.secondary), in: .capsule)
+            .overlay(Capsule().strokeBorder(tint?.opacity(0.3) ?? .clear))
     }
 
     /// 画面下に固定する入力欄など。iOS 26 以降は下に流れる内容を隠して、浮かせた部品を読みやすくする。
@@ -294,10 +367,12 @@ extension Color {
         return String(format: "#%02x%02x%02x", byte(color.red), byte(color.green), byte(color.blue))
     }
 
-    /// 名前から決まる色。`hashValue` は起動ごとに変わるので文字コードの和で選ぶ。
+    /// 名前から決まる色。`hashValue` は起動ごとに変わるので FNV-1a で選ぶ（文字コードの和は似た名前が同じ色に寄る）。
     init(seed: String) {
-        let palette: [Color] = [.blue, .indigo, .purple, .pink, .orange, .teal, .green, .cyan]
-        self = palette[Int(seed.unicodeScalars.reduce(0) { $0 &+ $1.value } % UInt32(palette.count))]
+        // 薄く敷いた地の上で頭文字が読める、色相の離れた色
+        let palette: [Color] = [.blue, .indigo, .purple, .pink, .red, .orange, .green]
+        let hash = seed.utf8.reduce(UInt32(2_166_136_261)) { ($0 ^ UInt32($1)) &* 16_777_619 }
+        self = palette[Int(hash % UInt32(palette.count))]
     }
 }
 

@@ -23,16 +23,27 @@ struct SignInView: View {
     @AppStorage("origin") private var origin = AppSession.defaultOrigin.absoluteString
     @State private var isSigningIn = false
     @State private var error: String?
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         VStack(spacing: 24) {
             Spacer()
-            Image(systemName: "checklist")
-                .font(.system(size: 44, weight: .semibold))
-                .foregroundStyle(.white)
-                .frame(width: 96, height: 96)
-                .background(Color.accentColor.gradient, in: .rect(cornerRadius: 24))
-                .shadow(color: .accentColor.opacity(0.3), radius: 16, y: 8)
+            // アプリのアイコン（ライト・ダーク）と同じ絵。ロゴはアプリの Assets にある
+            Image("Logo")
+                .resizable()
+                .scaledToFit()
+                .padding(16)
+                .offset(x: 2, y: -1)
+                .frame(width: 104, height: 104)
+                .background(
+                    LinearGradient(
+                        colors: colorScheme == .dark
+                            ? [Color(hex: "#33302B"), Color(hex: "#171412")] : [Color(hex: "#FFF9ED"), Color(hex: "#FAE6BD")],
+                        startPoint: .top, endPoint: .bottom),
+                    in: .rect(cornerRadius: 26)
+                )
+                .overlay(RoundedRectangle(cornerRadius: 26).strokeBorder(.primary.opacity(0.08)))
+                .shadow(color: .accentColor.opacity(0.35), radius: 18, y: 8)
                 .accessibilityHidden(true)
             VStack(spacing: 8) {
                 Text("Koyori").font(.largeTitle.bold())
@@ -60,8 +71,10 @@ struct SignInView: View {
                 } label: {
                     HStack(spacing: 8) {
                         if isSigningIn { ProgressView() }
-                        Text(isSigningIn ? "ブラウザで承認を待っています" : "ブラウザでログイン")
+                        Text(isSigningIn ? "ブラウザで承認を待っています" : "ブラウザでログイン").fontWeight(.semibold)
                     }
+                    // アクセント色（琥珀）の上は、ライトでは白・ダークでは黒の方が読みやすい
+                    .foregroundStyle(.background)
                     .frame(maxWidth: .infinity, minHeight: 34)
                 }
                 .buttonStyle(.borderedProminent)
@@ -525,11 +538,12 @@ struct TaskFilterBar: View {
                 Image(systemName: "xmark").font(.caption2.bold())
             }
             .font(.subheadline.weight(.medium))
-            .foregroundStyle(.white)
+            .foregroundStyle(.primary)
             .padding(.leading, 6)
             .padding(.trailing, 12)
             .padding(.vertical, 6)
-            .background(Color.accentColor, in: .capsule)
+            .background(Color.accentColor.opacity(0.18), in: .capsule)
+            .overlay(Capsule().strokeBorder(Color.accentColor.opacity(0.5)))
         }
         .buttonStyle(.plain)
         .accessibilityLabel("\(title): \(user.username)、絞り込みを外す")
@@ -559,8 +573,9 @@ struct TaskRow: View {
         let isDone = status?.isDoneState == true
         HStack(alignment: .firstTextBaseline, spacing: 12) {
             StatusIcon(status: status).font(.title3).accessibilityHidden(true)  // 名前は下の行で読む
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 5) {
                 Text(task.title)
+                    .fontWeight(.medium)
                     .strikethrough(isDone)
                     .foregroundStyle(isDone ? .secondary : .primary)
                     .lineLimit(2)
@@ -577,20 +592,22 @@ struct TaskRow: View {
                     if let deadline = task.softDeadline ?? task.hardDeadline {
                         DeadlineLabel(date: deadline, isDone: isDone)
                     }
+                    Spacer(minLength: 0)
+                    // 担当者は情報の行の右端に揃える（名前は詳細で見る）
                     if !task.assignees.isEmpty {
-                        HStack(spacing: 4) {
-                            AvatarStack(users: task.assignees.map(\.user), size: 16)
-                            Text(task.assignees.map(\.user.username).joined(separator: ", "))
-                        }
+                        AvatarStack(users: task.assignees.map(\.user), size: 20)
+                            .accessibilityElement()
+                            .accessibilityLabel("担当: \(task.assignees.map(\.user.username).joined(separator: "、"))")
                     }
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .labelStyle(.compact)
                 .lineLimit(1)
+                if !task.labels.isEmpty { InlineLabels(labels: task.labels) }
             }
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, 4)
     }
 }
 
@@ -644,14 +661,15 @@ struct TaskDetailView: View {
                                     Task { await update(UpdateTaskRequest(statusId: id)) }
                                 }
                             } label: {
-                                Label { Text(status?.name ?? "ステータス") } icon: { StatusIcon(status: status) }.pill()
+                                Label { Text(status?.name ?? "ステータス") } icon: { StatusIcon(status: status) }
+                                    .pill(tint: status.map { Color(hex: $0.color) })
                             }
                             Menu {
                                 PriorityPicker(selection: task.priority) { priority in
                                     Task { await update(UpdateTaskRequest(priority: priority)) }
                                 }
                             } label: {
-                                PriorityLabel(priority: task.priority).pill()
+                                PriorityLabel(priority: task.priority).pill(tint: TaskPriority(rawValue: task.priority)?.color)
                             }
                         }
                         .buttonStyle(.borderless)
@@ -677,24 +695,31 @@ struct TaskDetailView: View {
                             title: "最終期限", systemImage: "calendar.badge.exclamationmark", date: date,
                             isDone: status?.isDoneState == true)
                     }
-                    if !task.assignees.isEmpty {
-                        LabeledContent {
-                            VStack(alignment: .trailing, spacing: 6) {
-                                ForEach(task.assignees, id: \.user.id) { assignee in
-                                    Button {
-                                        sheet = .profile(assignee.user.id)
-                                    } label: {
-                                        HStack(spacing: 6) {
-                                            Avatar(name: assignee.user.username, url: assignee.user.avatarUrl, size: 22)
-                                            Text(assignee.user.username)
+                    // 行を押すと付け外しの画面へ進む。札を押すとその人のプロフィール
+                    NavigationLink {
+                        AssigneePickerView(project: project, task: $task)
+                    } label: {
+                        if task.assignees.isEmpty {
+                            LabeledContent {
+                                Text("なし")
+                            } label: {
+                                Label("担当", systemImage: "person")
+                            }
+                        } else {
+                            // ラベルと同じく、見出しの下に札を並べる
+                            VStack(alignment: .leading, spacing: 10) {
+                                Label("担当", systemImage: "person")
+                                FlowLayout(spacing: 6) {
+                                    ForEach(task.assignees, id: \.user.id) { assignee in
+                                        Button {
+                                            sheet = .profile(assignee.user.id)
+                                        } label: {
+                                            PersonChip(name: assignee.user.username, url: assignee.user.avatarUrl)
                                         }
+                                        .buttonStyle(.borderless)
                                     }
-                                    .buttonStyle(.borderless)
-                                    .tint(.primary)
                                 }
                             }
-                        } label: {
-                            Label("担当", systemImage: "person")
                         }
                     }
                     NavigationLink {
@@ -718,13 +743,9 @@ struct TaskDetailView: View {
                             Button {
                                 sheet = .profile(user.id)
                             } label: {
-                                HStack(spacing: 6) {
-                                    Avatar(name: user.username, url: user.avatarUrl, size: 22)
-                                    Text(user.username)
-                                }
+                                PersonChip(name: user.username, url: user.avatarUrl)
                             }
                             .buttonStyle(.borderless)
-                            .tint(.primary)
                         } else {
                             Text("不明")
                         }
@@ -1093,6 +1114,85 @@ struct LabelPickerView: View {
         } catch {
             self.error = error.displayMessage
         }
+    }
+}
+
+/// 担当者を付け外しする。押すたびに保存する。
+struct AssigneePickerView: View {
+    let project: Project
+    @Binding var task: TaskItem
+    @Environment(AppSession.self) private var session
+    @State private var candidates: [UserSummary]?
+    /// 保存中の人。追加と解除が入れ違って古い内容に戻らないよう、1 人ずつ送る
+    @State private var savingId: UUID?
+    @State private var error: String?
+
+    /// 候補に、候補から外れた今の担当者（プロジェクトを抜けた人など）も足して、外せるようにする
+    private var users: [UserSummary] {
+        let candidates = candidates ?? []
+        return task.assignees.map(\.user).filter { user in !candidates.contains { $0.id == user.id } } + candidates
+    }
+
+    var body: some View {
+        List(users) { user in
+            let isOn = task.assignees.contains { $0.user.id == user.id }
+            Button {
+                Task { await toggle(user, isOn: isOn) }
+            } label: {
+                HStack(spacing: 10) {
+                    Avatar(name: user.username, url: user.avatarUrl, size: 30)
+                    // ボタンの中の `.primary` はアクセント色になるので、文字色を直接指定する
+                    Text(user.username).foregroundStyle(Color.primary)
+                    Spacer()
+                    if savingId == user.id {
+                        ProgressView()
+                    } else if isOn {
+                        Image(systemName: "checkmark").fontWeight(.semibold).foregroundStyle(.tint)
+                    }
+                }
+            }
+            .disabled(savingId != nil)
+            .accessibilityAddTraits(isOn ? .isSelected : [])
+        }
+        .loadState(isLoaded: candidates != nil, error: $error)
+        .overlay {
+            if candidates != nil, users.isEmpty {
+                ContentUnavailableView("担当者にできる人がいません", systemImage: "person.2.slash")
+            }
+        }
+        .navigationTitle("担当")
+        #if os(iOS)
+        .navigationBarTitleDisplayMode(.inline)
+        #endif
+        .sensoryFeedback(.selection, trigger: task.assignees)
+        .task { await load() }
+        .refreshable { await load() }
+    }
+
+    private func load() async {
+        do {
+            candidates = try await session.api.assignableUsers(project)
+                .sorted { $0.username.localizedStandardCompare($1.username) == .orderedAscending }
+        } catch {
+            self.error = error.displayMessage
+        }
+    }
+
+    private func toggle(_ user: UserSummary, isOn: Bool) async {
+        savingId = user.id
+        defer { savingId = nil }
+        let api = session.api
+        do {
+            if isOn {
+                try await api.removeAssignee(project, taskId: task.id, userId: user.id)
+            } else {
+                try await api.addAssignee(project, taskId: task.id, userId: user.id)
+            }
+        } catch {
+            // 他の人が先に変えていた（409・404）ときも、読み直した今の担当を出す
+            self.error = error.displayMessage
+        }
+        if let latest = try? await api.task(project, id: task.id) { task = latest }
     }
 }
 

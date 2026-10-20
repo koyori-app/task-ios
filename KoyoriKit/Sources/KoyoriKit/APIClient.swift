@@ -198,6 +198,16 @@ extension APIClient {
         try await request("\(project.path)/tasks/\(id)", method: "PUT", body: body)
     }
 
+    /// 担当者を 1 人足す。すでに担当なら 409。応答は利用者の名前を持たないので、表示はタスクを読み直す
+    func addAssignee(_ project: Project, taskId: UUID, userId: UUID) async throws {
+        try await send("\(project.path)/tasks/\(taskId)/assignees", method: "POST", body: AssigneeInput(userId: userId))
+    }
+
+    /// 担当者を 1 人外す。担当でなければ 404。
+    func removeAssignee(_ project: Project, taskId: UUID, userId: UUID) async throws {
+        try await send("\(project.path)/tasks/\(taskId)/assignees/\(userId)", method: "DELETE")
+    }
+
     func comments(_ project: Project, taskId: UUID) async throws -> CommentList {
         try await request("\(project.path)/tasks/\(taskId)/comments")
     }

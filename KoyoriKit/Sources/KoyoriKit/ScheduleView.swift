@@ -83,6 +83,7 @@ struct ScheduleView: View {
                     }
                 }
                 .padding(.bottom)
+                .background(alignment: .topLeading) { dayColumns }
             }
         }
         .overlay {
@@ -139,12 +140,34 @@ struct ScheduleView: View {
                 let isToday = Calendar.current.isDateInToday(date)
                 VStack(spacing: 2) {
                     Text(date, format: .dateTime.weekday(.narrow))
-                    Text(date, format: .dateTime.day()).fontWeight(isToday ? .bold : .regular)
+                    // 今日はカレンダー App と同じく日付を囲む（日本語では「20日」と長いので横長の丸）
+                    Text(date, format: .dateTime.day())
+                        .fontWeight(isToday ? .bold : .regular)
+                        .foregroundStyle(isToday ? AnyShapeStyle(.background) : AnyShapeStyle(.primary))
+                        .padding(.horizontal, 5)
+                        .frame(minHeight: 20)
+                        .background(isToday ? Color.accentColor : .clear, in: .capsule)
                 }
                 .font(.caption)
                 .foregroundStyle(Calendar.current.isDateInWeekend(date) ? .secondary : .primary)
-                .frame(width: Self.dayWidth, height: 40)
-                .background(isToday ? Color.accentColor.opacity(0.15) : .clear)
+                .frame(width: Self.dayWidth, height: 46)
+            }
+        }
+    }
+
+    /// 日ごとの列の地。表全体に 1 枚で敷き、段の間で途切れないようにする。週末は薄い灰色、今日はアクセント色
+    private var dayColumns: some View {
+        HStack(spacing: 0) {
+            Color.clear.frame(width: Self.labelWidth + 8)
+            ForEach(0..<Self.days, id: \.self) { index in
+                let date = day(index)
+                Rectangle()
+                    .fill(
+                        Calendar.current.isDateInToday(date)
+                            ? Color.accentColor.opacity(0.1)
+                            : Calendar.current.isDateInWeekend(date) ? Color.secondary.opacity(0.08) : .clear
+                    )
+                    .frame(width: Self.dayWidth)
             }
         }
     }
@@ -216,7 +239,8 @@ struct ScheduleView: View {
 
     private func taskBar(_ task: Schedule.Item, range: ClosedRange<Int>, isPrimary: Bool) -> some View {
         let isOverdue = !task.status.isDoneState && (task.softDeadline.map { $0 < .now } ?? false)
-        let color: Color = task.status.isDoneState ? .gray : isOverdue ? .orange : .accentColor
+        // 期限切れは一覧の締切と同じ赤。アクセント色（琥珀）と見分けられるようにする
+        let color: Color = task.status.isDoneState ? .gray : isOverdue ? .red : .accentColor
         return Button {
             let project = Project(
                 id: task.project.id, tenantId: tenant.id, key: task.project.key, name: task.project.name, iconEmoji: nil)
@@ -244,30 +268,32 @@ struct ScheduleView: View {
         let x = CGFloat(range.lowerBound) * Self.dayWidth + 2
         let fill: Color = filled ? color : color.opacity(0.12)
         let stroke: Color = color.opacity(filled ? 0 : 0.6)
-        return Text(verbatim: title)
-            .font(.caption2)
-            .lineLimit(1)
-            .padding(.horizontal, 6)
-            .frame(width: width, height: 20, alignment: .leading)
-            .foregroundStyle(filled ? Color.white : Color.primary)
-            .background(fill, in: .rect(cornerRadius: 5))
-            .overlay(RoundedRectangle(cornerRadius: 5).stroke(stroke))
-            .offset(x: x)
+        // アクセント色の上は、ライトでは白・ダークでは黒の方が読みやすい
+        let text: AnyShapeStyle = !filled ? AnyShapeStyle(.primary) : color == .accentColor ? AnyShapeStyle(.background) : AnyShapeStyle(.white)
+        let shape = RoundedRectangle(cornerRadius: 5)
+        // 2 日以下の帯は名前が入らないので、帯の右に出す
+        let isShort = range.count <= 2
+        return HStack(spacing: 4) {
+            Text(verbatim: isShort ? "" : title)
+                .font(.caption2)
+                .lineLimit(1)
+                .padding(.horizontal, 6)
+                .frame(width: width, height: 20, alignment: .leading)
+                .foregroundStyle(text)
+                .background(fill, in: shape)
+                .overlay(shape.stroke(stroke))
+            if isShort {
+                Text(verbatim: title).font(.caption2).lineLimit(1).fixedSize()
+            }
+        }
+        .offset(x: x)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(verbatim: title))
     }
 
-    /// 1 日 = 固定幅の行。週末は背景を薄く塗る
+    /// 1 日 = 固定幅の行（列の地は `dayColumns`）
     private func lane(@ViewBuilder content: () -> some View) -> some View {
-        ZStack(alignment: .leading) {
-            HStack(spacing: 0) {
-                ForEach(0..<Self.days, id: \.self) { index in
-                    Rectangle()
-                        .fill(Calendar.current.isDateInWeekend(day(index)) ? Color.secondary.opacity(0.08) : .clear)
-                        .frame(width: Self.dayWidth)
-                }
-            }
-            content()
-        }
-        .frame(width: CGFloat(Self.days) * Self.dayWidth, height: 24, alignment: .leading)
+        content().frame(width: CGFloat(Self.days) * Self.dayWidth, height: 24, alignment: .leading)
     }
 
     private func move(_ days: Int) {
